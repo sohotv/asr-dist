@@ -43,6 +43,13 @@ RUNAS $PY -m venv /opt/asr/venv
 RUNAS /opt/asr/venv/bin/pip install -q -i https://mirrors.cloud.tencent.com/pypi/simple --upgrade pip || true
 RUNAS /opt/asr/venv/bin/pip install -q -i https://mirrors.cloud.tencent.com/pypi/simple faster-whisper flask || { echo "ASR-DEPLOY-FAIL: pip 安装失败，把输出发给我"; exit 1; }
 $SUDO mkdir -p /opt/asr/model-small && $SUDO chown -R asr:asr /opt/asr/model-small
+echo '== 内存兜底：确保至少 2G swap（防模型加载被 OOM 杀） =='
+if [ "$($SUDO swapon --show | wc -l)" -lt 1 ]; then
+  if [ ! -f /swapfile-asr ]; then $SUDO fallocate -l 2G /swapfile-asr || $SUDO dd if=/dev/zero of=/swapfile-asr bs=1M count=2048 status=none; $SUDO chmod 600 /swapfile-asr; $SUDO mkswap /swapfile-asr >/dev/null; fi
+  $SUDO swapon /swapfile-asr 2>/dev/null || true
+  $SUDO grep -q '/swapfile-asr' /etc/fstab || echo '/swapfile-asr none swap sw 0 0' | $SUDO tee -a /etc/fstab >/dev/null
+fi
+$SUDO swapon --show | head -3; free -m | head -2
 for f in config.json model.bin tokenizer.json vocabulary.txt; do RUNAS curl -fSL -C - --retry 3 -o /opt/asr/model-small/$f https://modelscope.cn/models/pengzhendong/faster-whisper-small/resolve/master/$f || { echo "ASR-DEPLOY-FAIL: 模型文件 $f 下载失败，把输出发给我"; exit 1; }; done
 RUNAS /opt/asr/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('/opt/asr/model-small', device='cpu', compute_type='int8'); print('MODEL-READY')" || { echo "ASR-DEPLOY-FAIL: 模型加载失败，把输出发给我"; exit 1; }
 # 5) systemd 托管（带资源上限：内存 1.2G、CPU 250%、低优先级，保护同机数据库）
@@ -56,7 +63,7 @@ EnvironmentFile=/opt/asr/asr.env
 ExecStart=/opt/asr/venv/bin/python /opt/asr/server.py
 Restart=always
 RestartSec=3
-MemoryMax=1200M
+MemoryMax=2600M
 CPUQuota=250%
 Nice=10
 [Install]
