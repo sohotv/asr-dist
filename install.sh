@@ -3,6 +3,7 @@
 set -x
 SUDO=""; [ "$(id -u)" != "0" ] && SUDO="sudo"
 TOKEN=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d " \n")
+if [ "$(id -u)" = "0" ]; then RUNAS() { runuser -u asr -- "$@"; }; else RUNAS() { sudo -u asr "$@"; }; fi
 # 1) 系统包：python/ffmpeg/nginx/certbot（apt 或 yum 系自动识别）
 if command -v apt-get >/dev/null; then
   $SUDO apt-get update -y
@@ -35,9 +36,9 @@ HF_ENDPOINT=https://hf-mirror.com
 EOF2
 $SUDO chown -R asr:asr /opt/asr 2>/dev/null || $SUDO chown -R asr /opt/asr
 # 4) venv + 依赖（腾讯云 PyPI 镜像）+ 预下载模型（HF 镜像）
-$SUDO -u asr $PY -m venv /opt/asr/venv
-$SUDO -u asr /opt/asr/venv/bin/pip install -q -i https://mirrors.cloud.tencent.com/pypi/simple faster-whisper flask || { echo "ASR-DEPLOY-FAIL: pip 安装失败，把输出发给我"; exit 1; }
-$SUDO -u asr env HF_ENDPOINT=https://hf-mirror.com /opt/asr/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8', download_root='/opt/asr/models'); print('MODEL-READY')" || { echo "ASR-DEPLOY-FAIL: 模型下载失败，把输出发给我"; exit 1; }
+RUNAS $PY -m venv /opt/asr/venv
+RUNAS /opt/asr/venv/bin/pip install -q -i https://mirrors.cloud.tencent.com/pypi/simple faster-whisper flask || { echo "ASR-DEPLOY-FAIL: pip 安装失败，把输出发给我"; exit 1; }
+RUNAS env HF_ENDPOINT=https://hf-mirror.com /opt/asr/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8', download_root='/opt/asr/models'); print('MODEL-READY')" || { echo "ASR-DEPLOY-FAIL: 模型下载失败，把输出发给我"; exit 1; }
 # 5) systemd 托管（带资源上限：内存 1.2G、CPU 250%、低优先级，保护同机数据库）
 $SUDO tee /etc/systemd/system/asr.service >/dev/null <<EOF3
 [Unit]
